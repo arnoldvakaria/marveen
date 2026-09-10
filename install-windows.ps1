@@ -18,6 +18,16 @@ Write-Host ""
 Write-Host "  Windows telepítő (WSL alapú)" -ForegroundColor DarkGray
 Write-Host ""
 
+# Branch-választás: a WSL-beli folytatás (install-linux.sh fetch + git clone)
+# NEM a Szotasz/marveen main-ről megy, hanem a saját forkról, a megadott
+# branch-ről. Üres Enter = develop (a repo default branch-e).
+$repoBranch = Read-Host "  Melyik branch-ről telepítsek? [develop]"
+if ([string]::IsNullOrEmpty($repoBranch)) { $repoBranch = "develop" }
+$repoUrl = "https://github.com/arnoldvakaria/marveen.git"
+$rawBase = "https://raw.githubusercontent.com/arnoldvakaria/marveen/$repoBranch"
+Write-Host "  ✓ Telepítés innen: $repoUrl ($repoBranch branch)" -ForegroundColor Green
+Write-Host ""
+
 # Step 1: Check if WSL is available
 Write-Host "[1/5] WSL ellenőrzés..." -ForegroundColor White
 
@@ -76,7 +86,10 @@ if ($distros -match "Ubuntu") {
         Write-Host "  Telepítés folytatása az Ubuntu-ban (install-linux.sh)..." -ForegroundColor Cyan
         # Triggers first-run init if still pending; if the distro needs a reboot
         # the call fails and we fall through to the manual instructions below.
-        wsl -d Ubuntu -- bash -c "curl -fsSL https://raw.githubusercontent.com/Szotasz/marveen/main/install-linux.sh -o /tmp/marveen-install.sh && bash /tmp/marveen-install.sh"
+        # install-linux.sh elso erdemi sora `source "$(dirname "$0")/install-lang.sh"`
+        # -- ezert MINDKET fajlt le kell tolteni, es az install-linux.sh nevet nem
+        # szabad atirni (a dirname($0)-relativ hivatkozasok csak igy mukodnek).
+        wsl -d Ubuntu -- bash -c "curl -fsSL $rawBase/install-lang.sh -o /tmp/install-lang.sh && curl -fsSL $rawBase/install-linux.sh -o /tmp/install-linux.sh && MARVEEN_REPO='$repoUrl' MARVEEN_BRANCH='$repoBranch' bash /tmp/install-linux.sh"
         if ($LASTEXITCODE -eq 0) {
             Write-Host ""
             Write-Host "  ✓ Marveen telepítve az Ubuntu-ban (install-linux.sh)." -ForegroundColor Green
@@ -87,7 +100,7 @@ if ($distros -match "Ubuntu") {
     Write-Host ""
     Write-Host "  Fejezd be így: indítsd el az Ubuntu-t (Start menü -> Ubuntu), állítsd" -ForegroundColor Yellow
     Write-Host "  be a felhasználót, majd az Ubuntu shellben futtasd:" -ForegroundColor Yellow
-    Write-Host "    curl -fsSL https://raw.githubusercontent.com/Szotasz/marveen/main/install-linux.sh -o install.sh && bash install.sh" -ForegroundColor Cyan
+    Write-Host "    curl -fsSL $rawBase/install-lang.sh -o install-lang.sh && curl -fsSL $rawBase/install-linux.sh -o install-linux.sh && MARVEEN_REPO='$repoUrl' MARVEEN_BRANCH='$repoBranch' bash install-linux.sh" -ForegroundColor Cyan
     Write-Host "  (vagy indítsd újra ezt a PowerShell scriptet, ha kell a gép-újraindítás)" -ForegroundColor DarkGray
     exit 0
 }
@@ -165,7 +178,7 @@ INSTALL_DIR="$installPath"
 
 # Clone repo
 if [ ! -d "\$INSTALL_DIR" ]; then
-    git clone --branch main https://github.com/Szotasz/marveen.git "\$INSTALL_DIR"
+    git clone --branch $repoBranch $repoUrl "\$INSTALL_DIR"
     echo '  ✓ Repó klónozva'
 else
     echo '  ✓ Marveen mappa már létezik'
@@ -305,7 +318,10 @@ console.log("  ✓ Claude Code first-run flags");
 # printed here follows a non-default WEB_PORT. Guarded: any failure keeps 3420.
 $WebPort = 3420
 try {
-  $envPort = (wsl bash -c "grep -E '^WEB_PORT=' '$installPath/.env' 2>/dev/null | head -1 | cut -d= -f2- | tr -d ' \"'").Trim()
+  # `" (backtick) az escape, NEM \" -- a backslash PowerShellben nem escape-
+  # karakter, a \" lezarta a stringet es az EGESZ script parse-olhatatlan volt
+  # innentol (pre-existing bug, a marveen-own peldany mar backtickkel megy).
+  $envPort = (wsl bash -c "grep -E '^WEB_PORT=' '$installPath/.env' 2>/dev/null | head -1 | cut -d= -f2- | tr -d ' `"'").Trim()
   if ($envPort) { $WebPort = $envPort }
 } catch { }
 

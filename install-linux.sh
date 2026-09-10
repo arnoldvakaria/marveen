@@ -472,6 +472,12 @@ ok "zstd $(zstd --version | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
 # at env-ben, hogy NE a Szotasz/marveen main-t klonozzuk, hanem a kivalasztott
 # forkot/branchet. Onallo (curl|bash) futtatasnal a regi default marad:
 # Szotasz/marveen + main (a publikus telepito viselkedese nem valtozik).
+# MARVEEN_OVERRIDE-ot MEG a defaultolas elott kell megjegyezni: ha barmelyik
+# env explicit be volt allitva, akkor a klonozott branch install-linux.sh-jat
+# NEM exec-eljuk (a celbranchen tipikusan nincs benne ez a parameterkezeles,
+# es a futo, lokalis scriptnek kell ervenyben maradnia -- lasd lentebb).
+MARVEEN_OVERRIDE=0
+[ -n "${MARVEEN_REPO:-}${MARVEEN_BRANCH:-}" ] && MARVEEN_OVERRIDE=1
 MARVEEN_REPO="${MARVEEN_REPO:-https://github.com/Szotasz/marveen.git}"
 MARVEEN_BRANCH="${MARVEEN_BRANCH:-main}"
 
@@ -494,13 +500,22 @@ if [ ! -f "$INSTALL_DIR/package.json" ]; then
       || fail "git clone sikertelen: $MARVEEN_REPO ($MARVEEN_BRANCH branch)"
     ok "Repo klonozva: $TARGET_DIR"
   fi
-  echo -e "  Telepito ujrainditasa a checkoutbol..."
-  # Forward argv so a run from outside the repo (curl bootstrap, or an explicit
-  # `install-linux.sh --port N`) keeps its flags across the self-reclone exec.
-  # Export the repo/branch override too, so the re-exec'd copy (and anything it
-  # spawns) keeps installing from the same fork/branch.
-  export MARVEEN_REPO MARVEEN_BRANCH
-  exec bash "$TARGET_DIR/install-linux.sh" "$@"
+  if [ "$MARVEEN_OVERRIDE" = "1" ]; then
+    # Custom repo/branch telepitesnel NEM exec-elunk at a klonozott
+    # install-linux.sh-ra: a celbranchen jellemzoen nincs benne a MARVEEN_REPO/
+    # MARVEEN_BRANCH kezeles, es a lokalis (most futo) scriptnek kell vegigvinnie
+    # a telepitest. A checkout install-linux.sh-jahoz nem nyulunk (nem irjuk
+    # felul) -- csak az INSTALL_DIR-t iranyitjuk at a klonra, es megyunk tovabb
+    # ebben a peldanyban.
+    INSTALL_DIR="$TARGET_DIR"
+    ok "Folytatas a lokalis telepitovel, celkonyvtar: $INSTALL_DIR ($MARVEEN_BRANCH branch)"
+  else
+    echo -e "  Telepito ujrainditasa a checkoutbol..."
+    # Forward argv so a run from outside the repo (curl bootstrap, or an explicit
+    # `install-linux.sh --port N`) keeps its flags across the self-reclone exec.
+    export MARVEEN_REPO MARVEEN_BRANCH
+    exec bash "$TARGET_DIR/install-linux.sh" "$@"
+  fi
 fi
 
 INSTALL_STEP="claude-bun-install"

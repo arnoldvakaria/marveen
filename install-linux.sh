@@ -468,23 +468,38 @@ ok "zstd $(zstd --version | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
 # package.json nelkuli mappaban futna (ENOENT: /root/package.json). Ilyenkor
 # klonozzuk a repot egy stabil helyre es ujrafuttatjuk magunkat onnan.
 # git itt mar garantaltan telepitve van (lasd fentebb a [1/7] lepest).
+# Repo/branch felulbiralat -- a Windows/WSL wrapper (install-windows.ps1) adja
+# at env-ben, hogy NE a Szotasz/marveen main-t klonozzuk, hanem a kivalasztott
+# forkot/branchet. Onallo (curl|bash) futtatasnal a regi default marad:
+# Szotasz/marveen + main (a publikus telepito viselkedese nem valtozik).
+MARVEEN_REPO="${MARVEEN_REPO:-https://github.com/Szotasz/marveen.git}"
+MARVEEN_BRANCH="${MARVEEN_BRANCH:-main}"
+
 if [ ! -f "$INSTALL_DIR/package.json" ]; then
   warn "A telepito a repon kivulrol fut (nincs package.json itt: $INSTALL_DIR)."
   TARGET_DIR="$HOME/marveen"
   if [ -f "$TARGET_DIR/package.json" ]; then
     ok "Meglevo checkout: $TARGET_DIR -- frissites..."
+    # Ha a meglevo checkout nem a kert branchen all, valtsunk at ra -- de csak
+    # ovatosan: barmelyik lepes hibaja eseten warn + maradunk a jelenlegin.
+    if [ "$(git -C "$TARGET_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null)" != "$MARVEEN_BRANCH" ]; then
+      { git -C "$TARGET_DIR" fetch origin "$MARVEEN_BRANCH" 2>/dev/null \
+          && git -C "$TARGET_DIR" checkout "$MARVEEN_BRANCH" 2>/dev/null; } \
+        || warn "branch valtas kihagyva ($MARVEEN_BRANCH -- helyi valtozasok vagy hianyzo branch)."
+    fi
     git -C "$TARGET_DIR" pull --ff-only 2>/dev/null || warn "git pull kihagyva (helyi valtozasok lehetnek)."
   else
-    echo -e "  Repo klonozasa -> ${TARGET_DIR} ..."
-    # A repo default branch-e a develop, de a publikus telepito main-rol fut
-    # (a Windows/WSL wrapper is main-rol fetcheli a scriptet) -> pineljuk a main-t.
-    git clone --depth 1 --branch main https://github.com/Szotasz/marveen.git "$TARGET_DIR" \
-      || fail "git clone sikertelen: https://github.com/Szotasz/marveen.git (main branch)"
+    echo -e "  Repo klonozasa -> ${TARGET_DIR} (${MARVEEN_BRANCH} branch) ..."
+    git clone --depth 1 --branch "$MARVEEN_BRANCH" "$MARVEEN_REPO" "$TARGET_DIR" \
+      || fail "git clone sikertelen: $MARVEEN_REPO ($MARVEEN_BRANCH branch)"
     ok "Repo klonozva: $TARGET_DIR"
   fi
   echo -e "  Telepito ujrainditasa a checkoutbol..."
   # Forward argv so a run from outside the repo (curl bootstrap, or an explicit
   # `install-linux.sh --port N`) keeps its flags across the self-reclone exec.
+  # Export the repo/branch override too, so the re-exec'd copy (and anything it
+  # spawns) keeps installing from the same fork/branch.
+  export MARVEEN_REPO MARVEEN_BRANCH
   exec bash "$TARGET_DIR/install-linux.sh" "$@"
 fi
 

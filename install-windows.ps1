@@ -24,9 +24,14 @@ Write-Host ""
 $repoBranch = Read-Host "  Melyik branch-ről telepítsek? [develop]"
 if ([string]::IsNullOrEmpty($repoBranch)) { $repoBranch = "develop" }
 $repoUrl = "https://github.com/arnoldvakaria/marveen.git"
-$rawBase = "https://raw.githubusercontent.com/arnoldvakaria/marveen/$repoBranch"
 Write-Host "  ✓ Telepítés innen: $repoUrl ($repoBranch branch)" -ForegroundColor Green
+Write-Host "    (a telepítő scriptek viszont INNEN, a lokális checkoutból mennek be a WSL-be)" -ForegroundColor DarkGray
 Write-Host ""
+
+# A lokalis scriptmappa: az install-linux.sh/install-lang.sh parost INNEN
+# masoljuk be a WSL-be, nem GitHubrol (a WSL-utvonalat kesobb szamoljuk ki,
+# amikor az Ubuntu mar biztosan letezik).
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 
 # Step 1: Check if WSL is available
 Write-Host "[1/5] WSL ellenőrzés..." -ForegroundColor White
@@ -81,15 +86,23 @@ if ($distros -match "Ubuntu") {
     # Don't dead-end on exit (the old behaviour re-looped here forever). Offer to
     # continue in the SAME sitting by handing control to install-linux.sh INSIDE
     # WSL with interactive stdin -- the proven path (kártya 3BB2E738 workaround).
+    # A lokalis scriptmappa WSL-utvonala -- most mar letezik az Ubuntu, mehet a
+    # wslpath. A wsl.exe UTF-16 kimenete miatt itt is kell a \0-strip (lasd a
+    # fajl teteji NOTE-ot).
+    $wslScriptDir = ((wsl -d Ubuntu wslpath -u ($scriptDir -replace '\\', '/') 2>&1 | Out-String) -replace "`0", "").Trim()
     $cont = Read-Host "  Folytassam most a telepítést az Ubuntu-ban? (i/n) [i]"
     if ([string]::IsNullOrEmpty($cont) -or $cont -eq "i") {
         Write-Host "  Telepítés folytatása az Ubuntu-ban (install-linux.sh)..." -ForegroundColor Cyan
         # Triggers first-run init if still pending; if the distro needs a reboot
         # the call fails and we fall through to the manual instructions below.
-        # install-linux.sh elso erdemi sora `source "$(dirname "$0")/install-lang.sh"`
-        # -- ezert MINDKET fajlt le kell tolteni, es az install-linux.sh nevet nem
-        # szabad atirni (a dirname($0)-relativ hivatkozasok csak igy mukodnek).
-        wsl -d Ubuntu -- bash -c "curl -fsSL $rawBase/install-lang.sh -o /tmp/install-lang.sh && curl -fsSL $rawBase/install-linux.sh -o /tmp/install-linux.sh && MARVEEN_REPO='$repoUrl' MARVEEN_BRANCH='$repoBranch' bash /tmp/install-linux.sh"
+        # A LOKALIS install-linux.sh + install-lang.sh megy be a WSL-be (nem a
+        # GitHub-os): a telepitendo custom branchen nincs benne a MARVEEN_REPO/
+        # MARVEEN_BRANCH parameterkezeles, ezert az ottani scriptek hasznalhatatlanok
+        # lennenek. install-linux.sh elso erdemi sora `source "$(dirname "$0")/
+        # install-lang.sh"` -- ezert MINDKET fajl kell, eredeti neven. A sed a CRLF
+        # sorvegeket szedi le (Windows-checkoutban a bash "$'\r': command not
+        # found"-dal halna el).
+        wsl -d Ubuntu -- bash -c "sed 's/\r$//' '$wslScriptDir/install-linux.sh' > /tmp/install-linux.sh && sed 's/\r$//' '$wslScriptDir/install-lang.sh' > /tmp/install-lang.sh && MARVEEN_REPO='$repoUrl' MARVEEN_BRANCH='$repoBranch' bash /tmp/install-linux.sh"
         if ($LASTEXITCODE -eq 0) {
             Write-Host ""
             Write-Host "  ✓ Marveen telepítve az Ubuntu-ban (install-linux.sh)." -ForegroundColor Green
@@ -100,7 +113,7 @@ if ($distros -match "Ubuntu") {
     Write-Host ""
     Write-Host "  Fejezd be így: indítsd el az Ubuntu-t (Start menü -> Ubuntu), állítsd" -ForegroundColor Yellow
     Write-Host "  be a felhasználót, majd az Ubuntu shellben futtasd:" -ForegroundColor Yellow
-    Write-Host "    curl -fsSL $rawBase/install-lang.sh -o install-lang.sh && curl -fsSL $rawBase/install-linux.sh -o install-linux.sh && MARVEEN_REPO='$repoUrl' MARVEEN_BRANCH='$repoBranch' bash install-linux.sh" -ForegroundColor Cyan
+    Write-Host "    sed 's/\r$//' '$wslScriptDir/install-linux.sh' > install-linux.sh; sed 's/\r$//' '$wslScriptDir/install-lang.sh' > install-lang.sh; MARVEEN_REPO='$repoUrl' MARVEEN_BRANCH='$repoBranch' bash install-linux.sh" -ForegroundColor Cyan
     Write-Host "  (vagy indítsd újra ezt a PowerShell scriptet, ha kell a gép-újraindítás)" -ForegroundColor DarkGray
     exit 0
 }

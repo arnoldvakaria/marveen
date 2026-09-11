@@ -83,9 +83,17 @@ bash ~/ClaudeClaw/scripts/install-telegram-progress-hook.sh
 
 It is idempotent and is auto-run by `scripts/sync-hooks.sh` on every update. It:
 
+0. **Provider gate.** If `CHANNEL_PROVIDER` in the install `.env` resolves to
+   anything but `telegram` (exact known value; empty or unknown means
+   `telegram`), it retires any leftover Telegram plumbing and exits 0 without
+   touching anything else — `sync-hooks.sh` runs every installer on every
+   update, and this is what keeps a Slack install from getting the Telegram
+   hooks and timer re-wired each time. See the Slack doc for the full story.
 1. Copies the four hook scripts to `~/.claude/hooks/`.
 2. Patches `~/.claude/settings.json` (UserPromptSubmit / PostToolUse / Stop).
-3. Installs the watchdog as a **launchd** agent (macOS) or **systemd** user
+3. Retires the Slack progress plumbing (`scripts/retire-progress-watchdog.sh slack`)
+   so exactly one provider's indicator is live.
+4. Installs the watchdog as a **launchd** agent (macOS) or **systemd** user
    service+timer (Linux), running every ~60s.
 
 ## Tuning

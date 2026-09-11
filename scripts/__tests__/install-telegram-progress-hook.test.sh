@@ -8,10 +8,15 @@
 #   (c) does NOT execute code from a $(...) value in .env
 #   (d) correctly reads SERVICE_ID / BOT_NAME with and without quoting
 #   (e) falls back to defaults when .env is absent
-#   (f) copies hook files to the destination (core behaviour preserved)
+#   (f) MAIN_AGENT_ID fallback when SERVICE_ID absent
+#   (g) copies hook files to the destination (core behaviour preserved)
+#   (h) provider gate: CHANNEL_PROVIDER=slack -> installs NOTHING and retires
+#       any leftover Telegram plumbing (sync-hooks runs every installer)
 #
 # All filesystem operations use a fully isolated temp tree -- the real
-# ~/.claude directory and the real INSTALL_DIR are never touched.
+# ~/.claude directory and the real INSTALL_DIR are never touched. The full-run
+# cases feed the installer a temp .env via MARVEEN_ENV_FILE (the installer's
+# test hook) so they do not depend on whatever the checkout's own .env says.
 
 set -u
 
@@ -156,56 +161,86 @@ assert_eq   "MAIN_AGENT_ID fallback: SERVICE_ID resolves to myagent" \
 
 # ---------------------------------------------------------------------------
 # (g) Hook files are copied when the full script runs (behaviour preserved)
-# We drive the full script with a fake INSTALL_DIR + HOME + stub hook sources.
-# Daemon install is left to run; on macOS launchctl is a no-op here, on Linux
-# systemd --user is unavailable so it prints a warning and exits 0.
+# We drive the real script with an overridden HOME and a temp .env handed in
+# via MARVEEN_ENV_FILE (the installer's test hook), so the case depends
+# neither on the checkout's own .env nor on a hard-coded /tmp path. systemctl
+# is neutralised below, so the daemon step only writes unit files.
 # ---------------------------------------------------------------------------
+export DBUS_SESSION_BUS_ADDRESS="unix:path=/nonexistent-marveen-test"
+export XDG_RUNTIME_DIR="$TMP/run"
+mkdir -p "$XDG_RUNTIME_DIR"
+
 echo ""
 echo "(g) Full script: hook files are copied to DEST_DIR"
 CASE="$TMP/case-g"
-INSTALL_G="$CASE/marveen"
 HOME_G="$CASE/home"
-HOOKS_SRC_G="$INSTALL_G/scripts/hooks"
-mkdir -p "$HOOKS_SRC_G" "$HOME_G/.claude/hooks"
-for f in telegram_progress.py telegram_progress_clear.py \
-          telegram_progress_reply_clear.py telegram_progress_watchdog.py \
-          telegram_fallback_send.py; do
-  printf '#!/usr/bin/env python3\n# stub\n' > "$HOOKS_SRC_G/$f"
-done
+mkdir -p "$HOME_G/.claude/hooks"
 echo '{"hooks":{}}' > "$HOME_G/.claude/settings.json"
-cat > "$INSTALL_G/.env" <<'EOF'
-SERVICE_ID=testbot
-OWNER_NAME=Foo Bar
-BOT_NAME=TestBot
-EOF
-
-# Run the real script with overridden HOME and a symlinked scripts/hooks.
-REAL_HOOKS="$REPO_ROOT/scripts/hooks"
-rm -rf "$INSTALL_G/scripts/hooks"
-mkdir -p "$INSTALL_G/scripts"
-# Use the stub hooks we created (not real ones), already in $HOOKS_SRC_G.
-OUT="$(HOME="$HOME_G" bash "$SCRIPT" 2>&1)" || true
-# The script resolves INSTALL_DIR from its own __dirname. We can't override that
-# via env, so we inject a .env next to the script's actual install dir for this
-# specific case we test via the run_env_parse helper above -- the full-run (g)
-# test focuses only on whether the copy + settings patch succeeds when a
-# spaced OWNER_NAME is present. Since the script resolves its own install dir,
-# we verify via run_env_parse that SERVICE_ID is read correctly (covered by b/f).
-# Here we just confirm the real script exits 0 with a clean .env (no spaces).
-cat > "/tmp/marveen-hook-fix/.env" <<'EOF'
-SERVICE_ID=testbot
-BOT_NAME=TestBot
-EOF
-OUT2="$(HOME="$HOME_G" bash "$SCRIPT" 2>&1)"
+ENV_G="$CASE/env"
+printf 'SERVICE_ID=testbot\nOWNER_NAME=Foo Bar\nBOT_NAME=TestBot\nCHANNEL_PROVIDER=telegram\n' > "$ENV_G"
+OUT2="$(HOME="$HOME_G" MARVEEN_ENV_FILE="$ENV_G" bash "$SCRIPT" 2>&1)"
 EXIT=$?
-assert_zero "full script: exits 0 with clean .env" $EXIT
+assert_zero "full script: exits 0 with a spaced OWNER_NAME in .env" $EXIT
 for f in telegram_progress.py telegram_progress_clear.py \
           telegram_progress_reply_clear.py telegram_progress_watchdog.py \
           telegram_fallback_send.py; do
   if [ -f "$HOME_G/.claude/hooks/$f" ]; then pass "full script: $f copied"
   else fail "full script: $f NOT copied"; fi
 done
-rm -f "/tmp/marveen-hook-fix/.env"
+if grep -q 'telegram_progress\.py' "$HOME_G/.claude/settings.json"; then
+  pass "full script: Telegram hooks wired into settings.json"
+else
+  fail "full script: Telegram hooks missing from settings.json"
+fi
+
+# ---------------------------------------------------------------------------
+# (h) Provider gate: CHANNEL_PROVIDER=slack -> nothing installed, leftover
+# Telegram plumbing retired. sync-hooks.sh runs this installer on every update
+# of a Slack install too (and it runs LAST, after the Slack installer), so
+# without the gate every update re-wired telegram_progress*.py and re-enabled
+# the Telegram timer next to the live Slack set.
+# ---------------------------------------------------------------------------
+echo ""
+echo "(h) Provider gate: CHANNEL_PROVIDER=slack -> nothing installed, leftover Telegram plumbing retired"
+CASE="$TMP/case-h"
+HOME_H="$CASE/home"
+mkdir -p "$HOME_H/.claude/hooks" "$HOME_H/.config/systemd/user"
+cat > "$HOME_H/.claude/settings.json" <<'JSONEOF'
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {"hooks": [
+        {"type": "command", "command": "/usr/bin/python3 /h/.claude/hooks/slack_progress.py"},
+        {"type": "command", "command": "/usr/bin/python3 /h/.claude/hooks/telegram_progress.py"}
+      ]}
+    ],
+    "PostToolUse": [
+      {"matcher": "telegram.*reply",
+       "hooks": [{"type": "command", "command": "/usr/bin/python3 /h/.claude/hooks/telegram_progress_reply_clear.py"}]}
+    ]
+  }
+}
+JSONEOF
+printf '[Timer]\n' > "$HOME_H/.config/systemd/user/testbot-telegram-progress-watchdog.timer"
+printf '[Service]\n' > "$HOME_H/.config/systemd/user/testbot-telegram-progress-watchdog.service"
+ENV_H="$CASE/env"
+printf 'SERVICE_ID=testbot\nBOT_NAME=TestBot\nCHANNEL_PROVIDER=slack\n' > "$ENV_H"
+OUT3="$(HOME="$HOME_H" MARVEEN_ENV_FILE="$ENV_H" bash "$SCRIPT" 2>&1)"
+EXIT=$?
+assert_zero "provider gate: exits 0" $EXIT
+assert_absent "$HOME_H/.claude/hooks/telegram_progress.py" "provider gate: no Telegram hook file copied"
+assert_absent "$HOME_H/.config/systemd/user/testbot-telegram-progress-watchdog.timer" "provider gate: leftover Telegram timer removed"
+assert_absent "$HOME_H/.config/systemd/user/testbot-telegram-progress-watchdog.service" "provider gate: leftover Telegram service removed"
+if grep -q 'telegram_progress' "$HOME_H/.claude/settings.json"; then
+  fail "provider gate: leftover Telegram hooks still wired"
+else
+  pass "provider gate: leftover Telegram hooks unwired"
+fi
+if grep -q 'slack_progress\.py' "$HOME_H/.claude/settings.json"; then
+  pass "provider gate: Slack hooks left alone"
+else
+  fail "provider gate: Slack hooks were destroyed"
+fi
 
 # ---------------------------------------------------------------------------
 echo ""

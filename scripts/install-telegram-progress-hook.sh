@@ -12,12 +12,18 @@
 #                                  answer or an explicit failure
 #
 # What it does:
+#   0. Provider gate: if CHANNEL_PROVIDER (install .env) resolves to anything
+#      but "telegram", it retires any leftover Telegram plumbing and exits 0 --
+#      nothing below runs. This is what keeps sync-hooks.sh (which runs every
+#      installer on every update) from resurrecting the retired provider.
 #   1. Copies the 4 hook scripts to ~/.claude/hooks/
 #   2. Patches ~/.claude/settings.json idempotently:
 #        UserPromptSubmit -> telegram_progress.py
 #        PostToolUse(telegram.*reply) -> telegram_progress_reply_clear.py
 #        Stop -> telegram_progress_clear.py
-#   3. Installs the watchdog as a launchd agent (macOS) or systemd
+#   3. Retires the Slack progress plumbing (hooks + watchdog) so exactly one
+#      provider's indicator is live -- see retire-progress-watchdog.sh.
+#   4. Installs the watchdog as a launchd agent (macOS) or systemd
 #      service+timer (Linux), running ~every 60s.
 #
 # Idempotent: safe to re-run (e.g. from sync-hooks.sh on every update).
@@ -40,10 +46,13 @@ INSTALL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 # Sourcing executes the file: an unquoted value with spaces (e.g. OWNER_NAME=Foo Bar)
 # causes bash to run the trailing word as a command; a $(...) value runs arbitrary code.
 # This function uses grep + pure string manipulation -- no eval, no subshell execution.
+# MARVEEN_ENV_FILE: test hook only (scripts/__tests__/*progress-hook*.test.sh)
+# -- lets a test point the installer at a temp .env instead of the checkout's.
 read_env() {
-  [ -f "$INSTALL_DIR/.env" ] || return 0
+  local f="${MARVEEN_ENV_FILE:-$INSTALL_DIR/.env}"
+  [ -f "$f" ] || return 0
   local v
-  v="$(grep -E "^${1}=" "$INSTALL_DIR/.env" | tail -1)" || return 0
+  v="$(grep -E "^${1}=" "$f" | tail -1)" || return 0
   v="${v#*=}"
   case "$v" in
     '"'*) v="${v#\"}"; v="${v%\"}" ;;
@@ -56,6 +65,29 @@ MAIN_AGENT_ID_ENV="$(read_env MAIN_AGENT_ID)"
 BOT_NAME="$(read_env BOT_NAME)"
 SERVICE_ID="${SERVICE_ID:-${MAIN_AGENT_ID_ENV:-marveen}}"
 BOT_NAME="${BOT_NAME:-Marveen}"
+
+# --- Provider gate (order-independent) --------------------------------------
+# sync-hooks.sh runs EVERY install-*-hook.sh on every update, in glob order
+# (slack first, telegram last). Each installer used to wire its own hooks and
+# timer unconditionally and only the cross-retire below was guarded, so a
+# Slack install ended every update with BOTH providers live: the Telegram
+# installer re-wired telegram_progress*.py and re-enabled its timer after this
+# script had retired them (its retire of slack was refused by the
+# active-provider guard). Exactly one provider's progress machinery may be
+# live -- the one in CHANNEL_PROVIDER -- so an installer whose provider is
+# not the active one retires ITSELF and stops here, before copying, patching
+# or writing units. Resolution mirrors src/channel-provider.ts: exact known
+# value, anything else (empty, "none", typo) means telegram.
+ACTIVE_PROVIDER="$(read_env CHANNEL_PROVIDER | tr -d ' \t\r')"
+case "$ACTIVE_PROVIDER" in
+  telegram|slack|discord|googlechat|teams) ;;
+  *) ACTIVE_PROVIDER="telegram" ;;
+esac
+if [ "$ACTIVE_PROVIDER" != "telegram" ]; then
+  echo "⊙ CHANNEL_PROVIDER=$ACTIVE_PROVIDER -- Telegram progress indicator not installed; retiring any leftover Telegram plumbing"
+  bash "$INSTALL_DIR/scripts/retire-progress-watchdog.sh" telegram || true
+  exit 0
+fi
 
 SUBMIT_HOOK="$DEST_DIR/telegram_progress.py"
 STOP_HOOK="$DEST_DIR/telegram_progress_clear.py"
@@ -95,7 +127,10 @@ if [ -z "$PY" ]; then
 fi
 
 # --- Patch settings.json idempotently --------------------------------------
-"$PY" - "$SETTINGS" "$PY" "$SUBMIT_HOOK" "$STOP_HOOK" "$REPLY_HOOK" <<'PYEOF'
+# PYTHONIOENCODING pins stdout to utf-8 so the checkmark below can't crash the
+# installer on a platform whose default console codec (e.g. Windows cp1252)
+# can't encode it -- same as the Slack installer.
+PYTHONIOENCODING=utf-8 "$PY" - "$SETTINGS" "$PY" "$SUBMIT_HOOK" "$STOP_HOOK" "$REPLY_HOOK" <<'PYEOF'
 import json, sys
 
 settings_path, py, submit_hook, stop_hook, reply_hook = sys.argv[1:6]

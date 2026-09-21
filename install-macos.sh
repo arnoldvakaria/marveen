@@ -1400,12 +1400,14 @@ fi
 
 # ffmpeg (audio/video processing)
 if ! command -v ffmpeg &>/dev/null; then
+  echo -e "$(_t macos.ffmpeg_installing)"
   if command -v brew &>/dev/null; then
-    echo -e "$(_t macos.ffmpeg_installing)"
     brew install ffmpeg
+  elif command -v port &>/dev/null; then
+    sudo port install ffmpeg
   else
-    warn "ffmpeg nem telepitheto (brew hianzik) -- hang/video feldolgozas nem elerheto"
-    echo -e "  ${DIM}Kesobb: brew install ffmpeg${NC}"
+    warn "ffmpeg nem telepitheto (brew es MacPorts is hianzik) -- hang/video feldolgozas nem elerheto"
+    echo -e "  ${DIM}Kesobb: brew install ffmpeg  VAGY  sudo port install ffmpeg${NC}"
   fi
 fi
 if command -v ffmpeg &>/dev/null; then

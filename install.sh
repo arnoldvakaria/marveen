@@ -17,6 +17,33 @@ export MARVEEN_LANG
 echo "$MARVEEN_LANG" > "$(dirname "$0")/.lang"
 # ─────────────────────────────────────────────────────────────────────────────
 
+# ── Branch selection (if running outside the repo) ────────────────────────────
+# Ha a telepito a repon kivulrol fut (nincs package.json), interaktivan bekerjuk
+# melyik branch-rol klonozzuk a repot. A WSL wrapper (install-windows.ps1) env-ben
+# atadja, ilyenkor nem kerdezunk. A publikus telepito (curl|bash, nem-interaktiv)
+# az eredeti defaultot kapja: Szotasz/marveen + main.
+if [[ ! -f "$(dirname "$0")/package.json" ]] && [[ -z "${MARVEEN_REPO:-}${MARVEEN_BRANCH:-}" ]] && [[ -t 0 ]] && [[ -t 1 ]]; then
+  echo ""
+  if [[ "${MARVEEN_LANG:-hu}" == "en" ]]; then
+    echo "  📦  Which branch to install from?"
+    echo "      (empty = develop branch from your fork)"
+    read -rp "  Branch name [develop]: " _BRANCH_INPUT
+    _BRANCH_INPUT="${_BRANCH_INPUT:-develop}"
+    export MARVEEN_REPO="https://github.com/arnoldvakaria/marveen.git"
+    export MARVEEN_BRANCH="$_BRANCH_INPUT"
+    echo "  ✓ Installing from: $MARVEEN_REPO ($MARVEEN_BRANCH)"
+  else
+    echo "  📦  Melyik branch-ről telepítsek?"
+    echo "      (üres = develop branch a saját forkból)"
+    read -rp "  Branch név [develop]: " _BRANCH_INPUT
+    _BRANCH_INPUT="${_BRANCH_INPUT:-develop}"
+    export MARVEEN_REPO="https://github.com/arnoldvakaria/marveen.git"
+    export MARVEEN_BRANCH="$_BRANCH_INPUT"
+    echo "  ✓ Telepítés innen: $MARVEEN_REPO ($MARVEEN_BRANCH)"
+  fi
+fi
+# ─────────────────────────────────────────────────────────────────────────────
+
 case "$(uname -s)" in
   Darwin)
     exec "$(dirname "$0")/install-macos.sh" "$@"

@@ -14,6 +14,67 @@ NC='\033[0m'
 
 INSTALL_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Repo/branch felulbiralat es klonozas, ha a script a repon kivulrol fut.
+# Az install.sh (OS-detect wrapper) atadja env-ben a MARVEEN_REPO/BRANCH-et,
+# vagy az install-windows.ps1 (WSL), vagy kozvetlen futtatasnal itt kerdezzuk.
+# A publikus telepito (curl|bash, nem-interaktiv) a defaultot kapja.
+# ─────────────────────────────────────────────────────────────────────────────
+MARVEEN_OVERRIDE=0
+[ -n "${MARVEEN_REPO:-}${MARVEEN_BRANCH:-}" ] && MARVEEN_OVERRIDE=1
+
+# Interaktiv branch-valasztas (csak ha nem az install.sh wrapper-bol jon)
+if [ "$MARVEEN_OVERRIDE" -eq 0 ] && [ -t 0 ] && [ -t 1 ] && [ ! -f "$INSTALL_DIR/package.json" ]; then
+  echo ""
+  echo "📦  Branch selection"
+  echo "    Which branch to install from? (empty = develop from your fork)"
+  read -rp "  Branch name [develop]: " BRANCH_INPUT
+  BRANCH_INPUT="${BRANCH_INPUT:-develop}"
+  if [ -n "$BRANCH_INPUT" ]; then
+    MARVEEN_REPO="https://github.com/arnoldvakaria/marveen.git"
+    MARVEEN_BRANCH="$BRANCH_INPUT"
+    MARVEEN_OVERRIDE=1
+    echo "  ✓ Installing from: $MARVEEN_REPO ($MARVEEN_BRANCH)"
+  fi
+fi
+
+# Defaultok ha nem lett beallitva
+MARVEEN_REPO="${MARVEEN_REPO:-https://github.com/Szotasz/marveen.git}"
+MARVEEN_BRANCH="${MARVEEN_BRANCH:-main}"
+
+# Ha nincs package.json (repon kivulrol fut), klonozzuk es folytatjuk
+if [ ! -f "$INSTALL_DIR/package.json" ]; then
+  echo "⚠ The installer is running outside the repo (no package.json at: $INSTALL_DIR)"
+  TARGET_DIR="$HOME/marveen"
+  if [ -f "$TARGET_DIR/package.json" ]; then
+    echo "  ✓ Existing checkout: $TARGET_DIR -- updating..."
+    if [ "$(git -C "$TARGET_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null)" != "$MARVEEN_BRANCH" ]; then
+      { git -C "$TARGET_DIR" fetch origin "$MARVEEN_BRANCH" 2>/dev/null \
+          && git -C "$TARGET_DIR" checkout "$MARVEEN_BRANCH" 2>/dev/null; } \
+        || echo "  ⚠ Branch switch skipped ($MARVEEN_BRANCH -- local changes or missing branch)"
+    fi
+    git -C "$TARGET_DIR" pull --ff-only 2>/dev/null || echo "  ⚠ git pull skipped (local changes)"
+  else
+    echo "  Cloning repo -> $TARGET_DIR ($MARVEEN_BRANCH branch)..."
+    git clone --depth 1 --branch "$MARVEEN_BRANCH" "$MARVEEN_REPO" "$TARGET_DIR" \
+      || { echo "✗ git clone failed: $MARVEEN_REPO ($MARVEEN_BRANCH branch)"; exit 1; }
+    echo "  ✓ Repo cloned: $TARGET_DIR"
+  fi
+  if [ "$MARVEEN_OVERRIDE" = "1" ]; then
+    # Custom repo/branch: NE exec-eljuk a klonozott install-macos.sh-t
+    # (a target branchen tipikusan nincs benne a MARVEEN_REPO/BRANCH kezeles).
+    # Az INSTALL_DIR-t atiranyitjuk a klonra, es a lokalis (most futo) script
+    # folytatja a telepitest.
+    INSTALL_DIR="$TARGET_DIR"
+    echo "  ✓ Continuing with local installer, target dir: $INSTALL_DIR ($MARVEEN_BRANCH branch)"
+  else
+    echo "  Restarting installer from the checkout..."
+    export MARVEEN_REPO MARVEEN_BRANCH
+    exec bash "$TARGET_DIR/install-macos.sh" "$@"
+  fi
+fi
+# ─────────────────────────────────────────────────────────────────────────────
+
 # CLI flag parsing -- runs before the interactive wizard.
 # WEB_PORT can also be set as an env var (env var wins if --port is not given).
 while [[ $# -gt 0 ]]; do
@@ -1084,6 +1145,7 @@ else
 fi
 
 echo -e "  ${CHANNEL_PROVIDER} plugin telepites..."
+claude plugin marketplace add anthropics/claude-plugins-official 2>/dev/null || true
 claude plugin marketplace add "$PLUGIN_MARKETPLACE" 2>/dev/null || true
 if claude plugin install "$PLUGIN_ID" 2>/dev/null; then
   ok "${CHANNEL_PROVIDER} plugin telepitve"

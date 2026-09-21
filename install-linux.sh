@@ -516,14 +516,38 @@ ok "zstd $(zstd --version | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
 # git itt mar garantaltan telepitve van (lasd fentebb a [1/7] lepest).
 # Repo/branch felulbiralat -- a Windows/WSL wrapper (install-windows.ps1) adja
 # at env-ben, hogy NE a Szotasz/marveen main-t klonozzuk, hanem a kivalasztott
-# forkot/branchet. Onallo (curl|bash) futtatasnal a regi default marad:
-# Szotasz/marveen + main (a publikus telepito viselkedese nem valtozik).
+# forkot/branchet. macOS-en (vagy Linux kozvetlen futtatasnal) interaktivan
+# bekerjuk a branchet, ha nincs env-ben. A publikus telepito (curl|bash,
+# nem-interaktiv terminal) az eredeti defaultot kapja: Szotasz/marveen + main.
 # MARVEEN_OVERRIDE-ot MEG a defaultolas elott kell megjegyezni: ha barmelyik
 # env explicit be volt allitva, akkor a klonozott branch install-linux.sh-jat
 # NEM exec-eljuk (a celbranchen tipikusan nincs benne ez a parameterkezeles,
 # es a futo, lokalis scriptnek kell ervenyben maradnia -- lasd lentebb).
 MARVEEN_OVERRIDE=0
 [ -n "${MARVEEN_REPO:-}${MARVEEN_BRANCH:-}" ] && MARVEEN_OVERRIDE=1
+
+# Interaktiv branch-valasztas (csak ha nem az install.sh wrapper-bol jon):
+# Az install.sh (OS-detect wrapper) mar megkerdezte a branch-et nyelvi
+# tamogatassal, es env-ben atadja. Ha kozvetlen futtatjuk az install-linux.sh-t
+# (nem az install.sh-n keresztul), es nincs env-ben, akkor itt kerdezzuk meg.
+if [ "$MARVEEN_OVERRIDE" -eq 0 ] && [ -t 0 ] && [ -t 1 ] && [ ! -f "$(dirname "$0")/package.json" ]; then
+  echo ""
+  echo -e "${BOLD}Branch-valasztas${NC}"
+  echo -e "${DIM}Melyik branch-rol telepitsek? (ures Enter = sajat fork develop branch-e)${NC}"
+  read -rp "  Branch nev [develop]: " BRANCH_INPUT
+  BRANCH_INPUT="${BRANCH_INPUT:-develop}"
+
+  # Ha nem ures, allitsuk be a repo/branch-et
+  if [ -n "$BRANCH_INPUT" ]; then
+    MARVEEN_REPO="https://github.com/arnoldvakaria/marveen.git"
+    MARVEEN_BRANCH="$BRANCH_INPUT"
+    MARVEEN_OVERRIDE=1
+    echo -e "  ${GREEN}✓${NC} Telepites innen: $MARVEEN_REPO ($MARVEEN_BRANCH branch)"
+    echo -e "  ${DIM}(a telepito scriptek a lokalis checkoutbol futnak tovabb)${NC}"
+  fi
+fi
+
+# Defaultok ha nem lett beallitva (nem-interaktiv terminal, vagy ures valasz)
 MARVEEN_REPO="${MARVEEN_REPO:-https://github.com/Szotasz/marveen.git}"
 MARVEEN_BRANCH="${MARVEEN_BRANCH:-main}"
 

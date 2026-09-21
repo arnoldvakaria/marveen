@@ -1400,10 +1400,17 @@ fi
 
 # ffmpeg (audio/video processing)
 if ! command -v ffmpeg &>/dev/null; then
-  echo -e "$(_t macos.ffmpeg_installing)"
-  brew install ffmpeg
+  if command -v brew &>/dev/null; then
+    echo -e "$(_t macos.ffmpeg_installing)"
+    brew install ffmpeg
+  else
+    warn "ffmpeg nem telepitheto (brew hianzik) -- hang/video feldolgozas nem elerheto"
+    echo -e "  ${DIM}Kesobb: brew install ffmpeg${NC}"
+  fi
 fi
-echo -e "$(_t macos.ffmpeg_done)"
+if command -v ffmpeg &>/dev/null; then
+  echo -e "$(_t macos.ffmpeg_done)"
+fi
 
 INSTALL_STEP="bumblebee"
 # Go + bumblebee (supply-chain scanner)

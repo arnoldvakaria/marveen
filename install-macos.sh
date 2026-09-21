@@ -773,12 +773,37 @@ echo ""
 echo -e "${BOLD}$(_t section_5)${NC}"
 cd "$INSTALL_DIR"
 resolve_service_node
+
+# Detect Python 3.8+ for node-gyp (walrus operator requirement)
+PYTHON_FOR_GYP=""
+if [ -x "$HOME/.pyenv/versions/3.12.0/bin/python3" ]; then
+  PYTHON_FOR_GYP="$HOME/.pyenv/versions/3.12.0/bin/python3"
+elif command -v python3.12 &>/dev/null; then
+  PYTHON_FOR_GYP="$(command -v python3.12)"
+elif command -v python3.11 &>/dev/null; then
+  PYTHON_FOR_GYP="$(command -v python3.11)"
+elif command -v python3.10 &>/dev/null; then
+  PYTHON_FOR_GYP="$(command -v python3.10)"
+elif command -v python3.9 &>/dev/null; then
+  PYTHON_FOR_GYP="$(command -v python3.9)"
+elif command -v python3.8 &>/dev/null; then
+  PYTHON_FOR_GYP="$(command -v python3.8)"
+fi
+
+# macOS 10.15 Catalina compatibility: skip postinstall scripts (esbuild requires macOS 12+)
+MACOS_VERSION=$(sw_vers -productVersion | cut -d. -f1-2)
+NPM_FLAGS="--loglevel warn"
+if [ "$MACOS_VERSION" = "10.15" ] || [ "$MACOS_VERSION" = "10.14" ] || [ "$MACOS_VERSION" = "10.13" ]; then
+  echo -e "  ${ORANGE}macOS $MACOS_VERSION felismert: --ignore-scripts mod (esbuild macOS 12+ kovetelese miatt)${NC}"
+  NPM_FLAGS="--loglevel warn --ignore-scripts"
+fi
+
 # Prepending NODE_BIN_DIR is what makes the rebuild target the SERVICE runtime:
 # npm resolves `node` through PATH, and node-gyp compiles against the node that
 # resolves. Same reason `npm install` runs here too -- it can fetch or build
 # native prebuilds of its own.
-if ! PATH="$NODE_BIN_DIR:$PATH" npm install --loglevel warn \
-  || ! PATH="$NODE_BIN_DIR:$PATH" npm rebuild better-sqlite3 --build-from-source; then
+if ! PATH="$NODE_BIN_DIR:$PATH" PYTHON="${PYTHON_FOR_GYP}" npm install $NPM_FLAGS \
+  || ! PATH="$NODE_BIN_DIR:$PATH" PYTHON="${PYTHON_FOR_GYP}" npm rebuild better-sqlite3 --build-from-source; then
   fail "npm install sikertelen. Ellenorizd a hibauzeneteket fentebb."
 fi
 ok "$(_t macos.npm_done)"
@@ -1211,26 +1236,33 @@ fi
 # Ollama + nomic-embed-text (szemantikus kereséshez)
 echo ""
 echo -e "$(_t macos.ollama_check)"
-if command -v ollama &>/dev/null; then
-  echo -e "  ${GREEN}✓${NC} $(_t macos.ollama_installed)"
+
+# macOS 10.15 és régebbiek: Ollama macOS 14.0+ kell (SecTrustCopyCertificateChain szimbólum hiányzik)
+if [ "$MACOS_VERSION" = "10.15" ] || [ "$MACOS_VERSION" = "10.14" ] || [ "$MACOS_VERSION" = "10.13" ]; then
+  echo -e "  ${ORANGE}⚠${NC}  macOS $MACOS_VERSION: Ollama kihagyva (macOS 14.0+ szukseges a binary kompatibilitashoz)"
+  echo -e "  ${ORANGE}ℹ${NC}  Szemantikus kereses (memory) alapertelmezett fuzzy-search moddal fog mukodni"
 else
-  echo -e "  ${ORANGE}$(_t macos.ollama_installing)${NC}"
-  brew install ollama 2>/dev/null || curl -fsSL https://ollama.com/install.sh | sh
-fi
+  if command -v ollama &>/dev/null; then
+    echo -e "  ${GREEN}✓${NC} $(_t macos.ollama_installed)"
+  else
+    echo -e "  ${ORANGE}$(_t macos.ollama_installing)${NC}"
+    brew install ollama 2>/dev/null || curl -fsSL https://ollama.com/install.sh | sh
+  fi
 
-# Start Ollama if not running
-if ! curl -s http://localhost:11434/api/version &>/dev/null; then
-  echo -e "$(_t macos.ollama_starting)"
-  ollama serve &>/dev/null &
-  sleep 3
-fi
+  # Start Ollama if not running
+  if ! curl -s http://localhost:11434/api/version &>/dev/null; then
+    echo -e "$(_t macos.ollama_starting)"
+    ollama serve &>/dev/null &
+    sleep 3
+  fi
 
-# Pull nomic-embed-text model
-if ! ollama list 2>/dev/null | grep -q "nomic-embed-text"; then
-  echo -e "$(_t macos.nomic_downloading)"
-  ollama pull nomic-embed-text
+  # Pull nomic-embed-text model
+  if ! ollama list 2>/dev/null | grep -q "nomic-embed-text"; then
+    echo -e "$(_t macos.nomic_downloading)"
+    ollama pull nomic-embed-text
+  fi
+  echo -e "$(_t macos.ollama_done)"
 fi
-echo -e "$(_t macos.ollama_done)"
 
 # Whisper (speech-to-text for video transcription) -- OPTIONAL.
 #

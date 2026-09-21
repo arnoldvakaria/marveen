@@ -499,6 +499,16 @@ if grep -qE '^flags[[:space:]]*:' /proc/cpuinfo 2>/dev/null && ! grep -qiw avx /
   AVX_LESS=1
   CLAUDE_PKG="@anthropic-ai/claude-code@${CLAUDE_PIN}"
 fi
+# macOS < 13.0: Bun standalone binary requires macOS 13+ (libc++ symbols missing).
+# Pin to the same Node-based version as AVX-less Linux hosts.
+if [ "$(uname)" = "Darwin" ]; then
+  _macos_major="$(sw_vers -productVersion 2>/dev/null | cut -d. -f1)"
+  if [ -n "$_macos_major" ] && [ "$_macos_major" -lt 13 ] 2>/dev/null; then
+    AVX_LESS=1
+    CLAUDE_PKG="@anthropic-ai/claude-code@${CLAUDE_PIN}"
+  fi
+  unset _macos_major
+fi
 
 # Per-session auto-updater OFF on every host, not just the AVX-less one.
 #

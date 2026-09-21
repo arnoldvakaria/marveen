@@ -474,7 +474,10 @@ unset TELEGRAM_BOT_TOKEN SLACK_BOT_TOKEN SLACK_APP_TOKEN DISCORD_BOT_TOKEN
 # scrub the env var before any tmux command runs.
 unset TMUX
 
-export PATH="/opt/homebrew/bin:$HOME/.bun/bin:/home/linuxbrew/.linuxbrew/bin:$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin"
+# Capture node/npm/claude location before sanitizing PATH (covers nvm, MacPorts, etc.)
+_NODE_BIN_DIR="$(dirname "$(command -v node 2>/dev/null)" 2>/dev/null)"
+export PATH="/opt/homebrew/bin:$HOME/.bun/bin:/home/linuxbrew/.linuxbrew/bin:$HOME/.local/bin:/opt/local/bin:/usr/local/bin:/usr/bin:/bin${_NODE_BIN_DIR:+:$_NODE_BIN_DIR}"
+unset _NODE_BIN_DIR
 
 # Root VPS / container: Claude Code refuses --dangerously-skip-permissions when
 # running as uid 0 ("cannot be used with root/sudo privileges"), so the tmux

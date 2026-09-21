@@ -32,6 +32,7 @@ const KNOWN_BIN_DIRS = [
   join(homedir(), '.local', 'bin'),
   join(homedir(), '.bun', 'bin'),
   '/opt/homebrew/bin',
+  '/opt/local/bin', // MacPorts
   '/usr/local/bin',
   '/usr/bin',
   '/bin',
